@@ -183,74 +183,90 @@ fun VpnAppScreen(viewModel: VpnViewModel) {
         modifier = Modifier.fillMaxSize(),
         containerColor = Color.Transparent, // Let the mesh gradient handle the background
         bottomBar = {
-            // Elegant Floating Frosted Glass Navigation Bar
-            NavigationBar(
-                containerColor = Color.Transparent,
-                tonalElevation = 0.dp,
-                modifier = Modifier
-                    .testTag("bottom_nav_bar")
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
-                    .glassCard(RoundedCornerShape(24.dp))
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                NavigationBarItem(
-                    selected = currentTab == 0,
-                    onClick = { currentTab = 0 },
-                    icon = { Icon(Icons.Default.PowerSettingsNew, contentDescription = "Connect") },
-                    label = { 
-                        Text(
-                            text = if (language == AppLanguage.Persian) "اتصال" else "Connect",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        ) 
-                    },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentBlue,
-                        unselectedIconColor = TextSlate400,
-                        selectedTextColor = AccentBlue,
-                        unselectedTextColor = TextSlate400,
-                        indicatorColor = Color(0x243A86FF) // light frosted blue indicator
-                    ),
-                    modifier = Modifier.testTag("nav_connect_tab")
-                )
-                NavigationBarItem(
-                    selected = currentTab == 1,
-                    onClick = { currentTab = 1 },
-                    icon = { Icon(Icons.Default.Security, contentDescription = "Security") },
-                    label = { 
-                        Text(
-                            text = if (language == AppLanguage.Persian) "امنیت" else "Security",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        ) 
-                    },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentBlue,
-                        unselectedIconColor = TextSlate400,
-                        selectedTextColor = AccentBlue,
-                        unselectedTextColor = TextSlate400,
-                        indicatorColor = Color(0x243A86FF)
-                    ),
-                    modifier = Modifier.testTag("nav_security_tab")
-                )
-                NavigationBarItem(
-                    selected = currentTab == 2,
-                    onClick = { currentTab = 2 },
-                    icon = { Icon(Icons.Default.NetworkCheck, contentDescription = "History") },
-                    label = { 
-                        Text(
-                            text = if (language == AppLanguage.Persian) "گزارش‌ها" else "Logs",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        ) 
-                    },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentBlue,
-                        unselectedIconColor = TextSlate400,
-                        selectedTextColor = AccentBlue,
-                        unselectedTextColor = TextSlate400,
-                        indicatorColor = Color(0x243A86FF)
-                    ),
-                    modifier = Modifier.testTag("nav_history_tab")
+                // Elegant Floating Frosted Glass Navigation Bar
+                NavigationBar(
+                    containerColor = Color.Transparent,
+                    tonalElevation = 0.dp,
+                    modifier = Modifier
+                        .testTag("bottom_nav_bar")
+                        .padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 8.dp)
+                        .glassCard(RoundedCornerShape(24.dp))
+                ) {
+                    NavigationBarItem(
+                        selected = currentTab == 0,
+                        onClick = { currentTab = 0 },
+                        icon = { Icon(Icons.Default.PowerSettingsNew, contentDescription = "Connect") },
+                        label = { 
+                            Text(
+                                text = if (language == AppLanguage.Persian) "اتصال" else "Connect",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            ) 
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = AccentBlue,
+                            unselectedIconColor = TextSlate400,
+                            selectedTextColor = AccentBlue,
+                            unselectedTextColor = TextSlate400,
+                            indicatorColor = Color(0x243A86FF) // light frosted blue indicator
+                        ),
+                        modifier = Modifier.testTag("nav_connect_tab")
+                    )
+                    NavigationBarItem(
+                        selected = currentTab == 1,
+                        onClick = { currentTab = 1 },
+                        icon = { Icon(Icons.Default.Security, contentDescription = "Security") },
+                        label = { 
+                            Text(
+                                text = if (language == AppLanguage.Persian) "امنیت" else "Security",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            ) 
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = AccentBlue,
+                            unselectedIconColor = TextSlate400,
+                            selectedTextColor = AccentBlue,
+                            unselectedTextColor = TextSlate400,
+                            indicatorColor = Color(0x243A86FF)
+                        ),
+                        modifier = Modifier.testTag("nav_security_tab")
+                    )
+                    NavigationBarItem(
+                        selected = currentTab == 2,
+                        onClick = { currentTab = 2 },
+                        icon = { Icon(Icons.Default.NetworkCheck, contentDescription = "History") },
+                        label = { 
+                            Text(
+                                text = if (language == AppLanguage.Persian) "گزارش‌ها" else "Logs",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            ) 
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = AccentBlue,
+                            unselectedIconColor = TextSlate400,
+                            selectedTextColor = AccentBlue,
+                            unselectedTextColor = TextSlate400,
+                            indicatorColor = Color(0x243A86FF)
+                        ),
+                        modifier = Modifier.testTag("nav_history_tab")
+                    )
+                }
+
+                Text(
+                    text = "Made by Moein • ©2026 All Rights Reserved",
+                    color = TextSlate400.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.5.sp,
+                    modifier = Modifier
+                        .padding(bottom = 12.dp)
+                        .testTag("moein_copyright_footer")
                 )
             }
         }
