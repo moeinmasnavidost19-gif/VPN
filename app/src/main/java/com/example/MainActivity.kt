@@ -695,6 +695,7 @@ fun ConnectTab(viewModel: VpnViewModel, language: AppLanguage) {
 
     if (showServerDialog) {
         ServerSelectionDialog(
+            viewModel = viewModel,
             language = language,
             onDismiss = { showServerDialog = false },
             onSelect = { server ->
@@ -1253,10 +1254,15 @@ fun LogItemRow(log: ConnectionLog, language: AppLanguage) {
 
 @Composable
 fun ServerSelectionDialog(
+    viewModel: VpnViewModel,
     language: AppLanguage,
     onDismiss: () -> Unit,
     onSelect: (VpnServer) -> Unit
 ) {
+    val isPingingAll by viewModel.isPingingAll.collectAsState()
+    val pingProgressText by viewModel.pingProgressText.collectAsState()
+    val serverLatencies by viewModel.serverLatencies.collectAsState()
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(24.dp),
@@ -1276,11 +1282,98 @@ fun ServerSelectionDialog(
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
 
+                // Premium real-time ping diagnostic card
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0x0CFFFFFF)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, GlassBorder, RoundedCornerShape(16.dp))
+                        .padding(bottom = 12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = if (language == AppLanguage.Persian) "سنجش تاخیر واقعی سرورها" else "Live Latency Engine",
+                                    color = TextSlate100,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = if (language == AppLanguage.Persian) "بررسی سرعت زنده تمامی ۵۰ سرور" else "Test live speeds for all 50 nodes",
+                                    color = TextSlate400,
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Button(
+                                onClick = { viewModel.runRealTimePingAll() },
+                                enabled = !isPingingAll,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AccentBlue,
+                                    disabledContainerColor = AccentBlue.copy(alpha = 0.5f)
+                                ),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("run_all_pings_btn")
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.NetworkCheck,
+                                        contentDescription = "Ping",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (language == AppLanguage.Persian) "تست پینگ" else "PING TEST",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                        
+                        if (isPingingAll || pingProgressText.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isPingingAll) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        color = NeonGreen,
+                                        strokeWidth = 1.5.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text(
+                                    text = pingProgressText,
+                                    color = NeonGreen,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.height(300.dp)
+                    modifier = Modifier.height(280.dp)
                 ) {
                     items(DefaultServers) { server ->
+                        val latency = serverLatencies[server.id] ?: server.baseLatencyMs
                         Row(
                             modifier = Modifier
                                 .testTag("server_item_${server.id}")
@@ -1292,7 +1385,7 @@ fun ServerSelectionDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                 Box(
                                     modifier = Modifier
                                         .size(36.dp)
@@ -1307,12 +1400,14 @@ fun ServerSelectionDialog(
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
-                                    Text(
-                                        text = if (language == AppLanguage.Persian) server.nameFa else server.nameEn,
-                                        color = TextSlate100,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = if (language == AppLanguage.Persian) server.nameFa else server.nameEn,
+                                            color = TextSlate100,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                     Text(
                                         text = server.ipAddress,
                                         color = TextSlate400,
@@ -1324,8 +1419,8 @@ fun ServerSelectionDialog(
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "${server.baseLatencyMs} ms",
-                                    color = if (server.baseLatencyMs <= 40) NeonGreen else Color.Yellow,
+                                    text = "$latency ms",
+                                    color = if (latency <= 30) NeonGreen else if (latency <= 70) AccentBlue else Color.Yellow,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
@@ -1335,7 +1430,7 @@ fun ServerSelectionDialog(
                                     modifier = Modifier
                                         .size(8.dp)
                                         .clip(CircleShape)
-                                        .background(if (server.baseLatencyMs <= 40) NeonGreen else Color.Yellow)
+                                        .background(if (latency <= 30) NeonGreen else if (latency <= 70) AccentBlue else Color.Yellow)
                                 )
                             }
                         }

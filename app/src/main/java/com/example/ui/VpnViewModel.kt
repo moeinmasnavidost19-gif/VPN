@@ -68,6 +68,18 @@ class VpnViewModel(private val repository: ConnectionLogRepository) : ViewModel(
     private val _encryptionStream = MutableStateFlow<List<String>>(emptyList())
     val encryptionStream: StateFlow<List<String>> = _encryptionStream.asStateFlow()
 
+    // Real-time server latencies map initialized with the default values
+    private val _serverLatencies = MutableStateFlow<Map<String, Int>>(DefaultServers.associate { it.id to it.baseLatencyMs })
+    val serverLatencies: StateFlow<Map<String, Int>> = _serverLatencies.asStateFlow()
+
+    // Real-time pinging progress status
+    private val _isPingingAll = MutableStateFlow(false)
+    val isPingingAll: StateFlow<Boolean> = _isPingingAll.asStateFlow()
+
+    // Real-time ping progress message or count
+    private val _pingProgressText = MutableStateFlow("")
+    val pingProgressText: StateFlow<String> = _pingProgressText.asStateFlow()
+
     // Database Logs Flow
     val connectionLogs: StateFlow<List<ConnectionLog>> = repository.allLogs
         .stateIn(
@@ -92,7 +104,42 @@ class VpnViewModel(private val repository: ConnectionLogRepository) : ViewModel(
     fun selectServer(server: VpnServer) {
         if (_connectionState.value == ConnectionState.Disconnected) {
             _selectedServer.value = server
-            _currentPing.value = server.baseLatencyMs
+            val measuredPing = _serverLatencies.value[server.id] ?: server.baseLatencyMs
+            _currentPing.value = measuredPing
+        }
+    }
+
+    fun runRealTimePingAll() {
+        if (_isPingingAll.value) return
+        _isPingingAll.value = true
+        _pingProgressText.value = if (_language.value == AppLanguage.Persian) "در حال شروع تست پینگ..." else "Starting ping test..."
+        
+        viewModelScope.launch {
+            val currentMap = _serverLatencies.value.toMutableMap()
+            val servers = DefaultServers
+            val total = servers.size
+            var completedCount = 0
+
+            // We will ping them in batches of 5 in parallel to make it visually attractive and extremely fast!
+            servers.chunked(5).forEach { batch ->
+                batch.map { server ->
+                    launch {
+                        val ping = server.testActualLatency()
+                        currentMap[server.id] = ping
+                        _serverLatencies.value = currentMap.toMap()
+                        completedCount++
+                        _pingProgressText.value = if (_language.value == AppLanguage.Persian) {
+                            "تست پینگ: $completedCount از $total سرور..."
+                        } else {
+                            "Ping progress: $completedCount of $total..."
+                        }
+                    }
+                }.forEach { it.join() }
+                delay(80)
+            }
+            
+            _pingProgressText.value = if (_language.value == AppLanguage.Persian) "تست با موفقیت پایان یافت!" else "Ping test finished!"
+            _isPingingAll.value = false
         }
     }
 
@@ -117,7 +164,7 @@ class VpnViewModel(private val repository: ConnectionLogRepository) : ViewModel(
 
             // Measure actual latency
             val server = _selectedServer.value
-            val actualPing = server.testActualLatency()
+            val actualPing = _serverLatencies.value[server.id] ?: server.testActualLatency()
             _currentPing.value = actualPing
 
             _connectionState.value = ConnectionState.Connected
