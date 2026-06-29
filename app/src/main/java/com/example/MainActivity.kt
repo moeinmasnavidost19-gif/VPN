@@ -27,12 +27,15 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +50,16 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -89,6 +102,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.VpnService
+import android.content.Context
+import android.content.Intent
+import android.app.Activity
 import com.example.data.AppDatabase
 import com.example.data.ConnectionLog
 import com.example.data.ConnectionLogRepository
@@ -96,6 +115,7 @@ import com.example.data.DefaultServers
 import com.example.data.VpnServer
 import com.example.ui.AppLanguage
 import com.example.ui.ConnectionState
+import com.example.ui.VpnProtocol
 import com.example.ui.VpnViewModel
 import com.example.ui.VpnViewModelFactory
 import com.example.ui.theme.MyApplicationTheme
@@ -175,12 +195,67 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun VpnAppScreen(viewModel: VpnViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val language by viewModel.language.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
+    val selectedServer by viewModel.selectedServer.collectAsState()
+    val selectedProtocol by viewModel.protocol.collectAsState()
     var currentTab by remember { mutableStateOf(0) } // 0: Connect, 1: Security Tools, 2: History logs
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
+    val vpnPrepareLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            // Permission granted, start VPN service and toggle VM connection
+            val intent = Intent(context, MyVpnService::class.java).apply {
+                action = MyVpnService.ACTION_CONNECT
+                putExtra(MyVpnService.EXTRA_SERVER_NAME, selectedServer.nameEn)
+                putExtra(MyVpnService.EXTRA_PROTOCOL, selectedProtocol.name)
+            }
+            context.startService(intent)
+            viewModel.toggleConnection()
+        }
+    }
+
+    val handleVpnToggle = {
+        if (connectionState == ConnectionState.Disconnected) {
+            val myUid = android.os.Process.myUid()
+            val realPackageName = context.packageManager.getPackagesForUid(myUid)?.firstOrNull() ?: context.packageName
+            val wrappedContext = object : android.content.ContextWrapper(context) {
+                override fun getPackageName(): String {
+                    return realPackageName
+                }
+            }
+            val vpnIntent = VpnService.prepare(wrappedContext)
+            if (vpnIntent != null) {
+                vpnPrepareLauncher.launch(vpnIntent)
+            } else {
+                // Already have permission, start VPN service and toggle VM connection
+                val intent = Intent(context, MyVpnService::class.java).apply {
+                    action = MyVpnService.ACTION_CONNECT
+                    putExtra(MyVpnService.EXTRA_SERVER_NAME, selectedServer.nameEn)
+                    putExtra(MyVpnService.EXTRA_PROTOCOL, selectedProtocol.name)
+                }
+                context.startService(intent)
+                viewModel.toggleConnection()
+            }
+        } else {
+            // Stop VPN service and toggle VM connection
+            val intent = Intent(context, MyVpnService::class.java).apply {
+                action = MyVpnService.ACTION_DISCONNECT
+            }
+            context.startService(intent)
+            viewModel.toggleConnection()
+        }
+    }
+
+    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
+
+    if (!isLoggedIn) {
+        AuthScreen(viewModel = viewModel)
+    } else {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
         containerColor = Color.Transparent, // Let the mesh gradient handle the background
         bottomBar = {
             Column(
@@ -287,7 +362,7 @@ fun VpnAppScreen(viewModel: VpnViewModel) {
             ) {
                 Column {
                     Text(
-                        text = if (language == AppLanguage.Persian) "ذن‌وی‌پی‌ان" else "ZenVPN",
+                        text = "poor",
                         color = TextSlate100,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
@@ -321,24 +396,132 @@ fun VpnAppScreen(viewModel: VpnViewModel) {
                     }
                 }
 
-                // Glassmorphic Language Selection Toggle Button
-                IconButton(
-                    onClick = {
-                        viewModel.setLanguage(
-                            if (language == AppLanguage.Persian) AppLanguage.English else AppLanguage.Persian
-                        )
-                    },
-                    modifier = Modifier
-                        .testTag("lang_toggle")
-                        .size(44.dp)
-                        .glassCard(CircleShape)
+                // Glassmorphic Language Selection and Profile Section
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Language,
-                        contentDescription = "Language",
-                        tint = TextSlate100,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    IconButton(
+                        onClick = {
+                            viewModel.setLanguage(
+                                if (language == AppLanguage.Persian) AppLanguage.English else AppLanguage.Persian
+                            )
+                        },
+                        modifier = Modifier
+                            .testTag("lang_toggle")
+                            .size(44.dp)
+                            .glassCard(CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Language,
+                            contentDescription = "Language",
+                            tint = TextSlate100,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    val userName by viewModel.currentUserName.collectAsState()
+                    val userEmail by viewModel.currentUserEmail.collectAsState()
+                    var showProfileDialog by remember { mutableStateOf(false) }
+
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x14FFFFFF))
+                            .border(1.dp, Color(0x33FFFFFF), CircleShape)
+                            .clickable { showProfileDialog = true }
+                            .testTag("user_avatar_btn"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = (userName ?: "M").take(1).uppercase(),
+                            color = AccentBlue,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (showProfileDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showProfileDialog = false },
+                            title = {
+                                Text(
+                                    text = if (language == AppLanguage.Persian) "حساب کاربری" else "User Account",
+                                    color = TextSlate100,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            },
+                            text = {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0x243A86FF)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = (userName ?: "M").take(1).uppercase(),
+                                            color = AccentBlue,
+                                            fontSize = 26.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Text(
+                                        text = userName ?: "User",
+                                        color = TextSlate100,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    Text(
+                                        text = userEmail ?: "",
+                                        color = TextSlate400,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showProfileDialog = false
+                                        viewModel.logout()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = WarningRed),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ExitToApp,
+                                        contentDescription = "Logout",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (language == AppLanguage.Persian) "خروج از حساب" else "Log Out",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            },
+                            containerColor = DeepDarkBg,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier
+                                .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
+                                .padding(4.dp)
+                        )
+                    }
                 }
             }
 
@@ -350,7 +533,7 @@ fun VpnAppScreen(viewModel: VpnViewModel) {
                     .padding(horizontal = 20.dp)
             ) {
                 when (currentTab) {
-                    0 -> ConnectTab(viewModel, language)
+                    0 -> ConnectTab(viewModel, language, handleVpnToggle)
                     1 -> SecurityTab(viewModel, language)
                     2 -> HistoryTab(viewModel, language)
                 }
@@ -358,9 +541,14 @@ fun VpnAppScreen(viewModel: VpnViewModel) {
         }
     }
 }
+}
 
 @Composable
-fun ConnectTab(viewModel: VpnViewModel, language: AppLanguage) {
+fun ConnectTab(
+    viewModel: VpnViewModel,
+    language: AppLanguage,
+    onToggleVpn: () -> Unit
+) {
     val connectionState by viewModel.connectionState.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val currentPing by viewModel.currentPing.collectAsState()
@@ -489,7 +677,7 @@ fun ConnectTab(viewModel: VpnViewModel, language: AppLanguage) {
                     val mainContentColor = if (connectionState == ConnectionState.Disconnected) DeepDarkBg else Color.White
 
                     Surface(
-                        onClick = { viewModel.toggleConnection() },
+                        onClick = { onToggleVpn() },
                         shape = CircleShape,
                         color = mainBtnColor,
                         modifier = Modifier
@@ -566,6 +754,27 @@ fun ConnectTab(viewModel: VpnViewModel, language: AppLanguage) {
                     }
                 }
             }
+
+            // Display server load quick panel when disconnected
+            AnimatedVisibility(
+                visible = connectionState == ConnectionState.Disconnected,
+                enter = fadeIn(tween(400)),
+                exit = fadeOut(tween(400))
+            ) {
+                ServerLoadQuickPanel(
+                    viewModel = viewModel,
+                    language = language,
+                    onSelectServer = { server ->
+                        viewModel.selectServer(server)
+                    }
+                )
+            }
+
+            VpnProtocolSelector(
+                viewModel = viewModel,
+                language = language,
+                connectionState = connectionState
+            )
         }
 
         // Active Server Selector (Matches ZenVPN footer layout card)
@@ -767,9 +976,261 @@ fun TelemetryCard(title: String, value: String, subtext: String, color: Color) {
 }
 
 @Composable
+fun VpnProtocolSelector(
+    viewModel: VpnViewModel,
+    language: AppLanguage,
+    connectionState: ConnectionState
+) {
+    val selectedProtocol by viewModel.protocol.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 4.dp)
+    ) {
+        Text(
+            text = if (language == AppLanguage.Persian) "پروتکل اتصال (حداکثر سرعت و امنیت)" else "CONNECTION PROTOCOL (MAX SPEED & SECURITY)",
+            color = TextSlate400,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassCard(RoundedCornerShape(16.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            val protocols = listOf(VpnProtocol.WireGuard, VpnProtocol.OpenVPN)
+            protocols.forEach { proto ->
+                val isSelected = selectedProtocol == proto
+                val isEnabled = connectionState == ConnectionState.Disconnected
+                
+                val title = when (proto) {
+                    VpnProtocol.WireGuard -> if (language == AppLanguage.Persian) "وایرگارد (پیشنهادی)" else "WireGuard (Recommended)"
+                    VpnProtocol.OpenVPN -> if (language == AppLanguage.Persian) "اوپن‌وی‌پی‌ان" else "OpenVPN"
+                }
+
+                val subText = when (proto) {
+                    VpnProtocol.WireGuard -> if (language == AppLanguage.Persian) "فوق‌سریع • پورت ۵۱۸۲۰" else "Hyper-speed • Port 51820"
+                    VpnProtocol.OpenVPN -> if (language == AppLanguage.Persian) "امنیت پیشرفته • پورت ۱۱۹۴" else "Hardened Security • Port 1194"
+                }
+
+                Card(
+                    onClick = {
+                        if (isEnabled) {
+                            viewModel.setProtocol(proto)
+                        }
+                    },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) AccentBlue.copy(alpha = 0.2f) else Color.Transparent
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) AccentBlue else Color.Transparent,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = title,
+                            color = if (isSelected) AccentBlue else (if (isEnabled) TextSlate100 else TextSlate400),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = subText,
+                            color = if (isSelected) AccentBlue.copy(alpha = 0.8f) else TextSlate400,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ServerLoadQuickPanel(
+    viewModel: VpnViewModel,
+    language: AppLanguage,
+    onSelectServer: (VpnServer) -> Unit
+) {
+    val serverLoads by viewModel.serverLoads.collectAsState()
+    val serverLatencies by viewModel.serverLatencies.collectAsState()
+    val selectedServer by viewModel.selectedServer.collectAsState()
+    
+    val popularServers = DefaultServers.take(12) // Show top 12 popular servers for quick load checking
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (language == AppLanguage.Persian) "بار زنده سرورها (کلیک برای انتخاب)" else "LIVE SERVER LOADS (TAP TO SELECT)",
+                color = TextSlate400,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+            
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(NeonGreen.copy(alpha = 0.15f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(NeonGreen)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (language == AppLanguage.Persian) "بروزرسانی زنده" else "LIVE UPDATE",
+                        color = NeonGreen,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(popularServers) { server ->
+                val isSelected = selectedServer.id == server.id
+                val load = serverLoads[server.id] ?: 35
+                val latency = serverLatencies[server.id] ?: server.baseLatencyMs
+                
+                val loadColor = if (load <= 50) NeonGreen else if (load <= 80) Color.Yellow else Color(0xFFFF5252)
+                
+                Card(
+                    onClick = { onSelectServer(server) },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) AccentBlue.copy(alpha = 0.15f) else Color(0x0CFFFFFF)
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .width(135.dp)
+                        .border(
+                            width = 1.2.dp,
+                            color = if (isSelected) AccentBlue else GlassBorder,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x22000000)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = getCountryFlagEmoji(server.countryCode),
+                                    fontSize = 18.sp
+                                )
+                            }
+                            
+                            // Latency indicator
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0x1AFFFFFF))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "$latency ms",
+                                    color = if (latency <= 50) NeonGreen else if (latency <= 120) AccentBlue else Color.Yellow,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Text(
+                            text = if (language == AppLanguage.Persian) server.nameFa.substringBefore(" ") else server.nameEn.substringBefore(" "),
+                            color = TextSlate100,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        // Load progress bar
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (language == AppLanguage.Persian) "بار: $load%" else "Load: $load%",
+                                color = loadColor,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { load / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp)),
+                            color = loadColor,
+                            trackColor = Color(0x1AFFFFFF)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun SecurityTab(viewModel: VpnViewModel, language: AppLanguage) {
     val encryptStream by viewModel.encryptionStream.collectAsState()
     val isConnected = viewModel.connectionState.collectAsState().value == ConnectionState.Connected
+    val selectedProtocol by viewModel.protocol.collectAsState()
     val scope = rememberCoroutineScope()
 
     var pingHost by remember { mutableStateOf("1.1.1.1") }
@@ -1001,7 +1462,7 @@ fun SecurityTab(viewModel: VpnViewModel, language: AppLanguage) {
                     )
                     ProtocolRow(
                         label = if (language == AppLanguage.Persian) "پروتکل اتصال" else "Tunnel Protocol",
-                        status = "WireGuard Core",
+                        status = if (selectedProtocol == VpnProtocol.WireGuard) "WireGuard Core" else "OpenVPN Secure",
                         color = AccentBlue
                     )
                 }
@@ -1278,6 +1739,7 @@ fun ServerSelectionDialog(
     val isPingingAll by viewModel.isPingingAll.collectAsState()
     val pingProgressText by viewModel.pingProgressText.collectAsState()
     val serverLatencies by viewModel.serverLatencies.collectAsState()
+    val serverLoads by viewModel.serverLoads.collectAsState()
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1324,7 +1786,7 @@ fun ServerSelectionDialog(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = if (language == AppLanguage.Persian) "بررسی سرعت زنده تمامی ۵۰ سرور" else "Test live speeds for all 50 nodes",
+                                    text = if (language == AppLanguage.Persian) "بررسی سرعت زنده تمامی ۱۰۰ سرور" else "Test live speeds for all 100 nodes",
                                     color = TextSlate400,
                                     fontSize = 10.sp
                                 )
@@ -1424,12 +1886,35 @@ fun ServerSelectionDialog(
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
-                                    Text(
-                                        text = server.ipAddress,
-                                        color = TextSlate400,
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace
-                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = server.ipAddress,
+                                            color = TextSlate400,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        
+                                        // Load status indicator
+                                        val load = serverLoads[server.id] ?: 30
+                                        val loadColor = if (load <= 50) NeonGreen else if (load <= 80) Color.Yellow else Color(0xFFFF5252)
+                                        val loadText = if (language == AppLanguage.Persian) "بار سرور: $load%" else "Load: $load%"
+                                        
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(loadColor.copy(alpha = 0.15f))
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        ) {
+                                            Text(
+                                                text = loadText,
+                                                color = loadColor,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
@@ -1521,3 +2006,526 @@ fun formatByteCount(bytes: Long): String {
     val value = bytes / Math.pow(1024.0, exp.toDouble())
     return String.format("%.1f %s", value, pre)
 }
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun AuthScreen(viewModel: VpnViewModel) {
+    val language by viewModel.language.collectAsState()
+    val isAuthLoading by viewModel.isAuthLoading.collectAsState()
+    val authError by viewModel.authError.collectAsState()
+    val otpSent by viewModel.otpSent.collectAsState()
+    val generatedOtp by viewModel.generatedOtp.collectAsState()
+    val currentUserEmail by viewModel.currentUserEmail.collectAsState()
+    val realEmailSent by viewModel.realEmailSent.collectAsState()
+    val isDemoMode by viewModel.isDemoMode.collectAsState()
+
+    var activeTab by remember { mutableStateOf(0) } // 0: Google, 1: Email OTP
+    var emailInput by remember { mutableStateOf("") }
+    var otpInput by remember { mutableStateOf("") }
+    var showGoogleAccountsDialog by remember { mutableStateOf(false) }
+
+    // Clean up error on tab swap
+    LaunchedEffect(activeTab) {
+        viewModel.resetAuthError()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .meshGradientBackground()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 440.dp)
+                .glassCard(RoundedCornerShape(28.dp))
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Visual Logo / Emblem
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color(0x14FFFFFF))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(22.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Security,
+                    contentDescription = "poor VPN Secure Core",
+                    tint = AccentBlue,
+                    modifier = Modifier.size(42.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "poor",
+                color = TextSlate100,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 1.sp
+            )
+
+            Text(
+                text = if (language == AppLanguage.Persian) "سامانه ورود و احراز هویت ایمن" else "Secure Authentication System",
+                color = TextSlate400,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
+            )
+
+            // Dynamic Option Tab Selector
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0x0CFFFFFF))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                val googleTabTitle = if (language == AppLanguage.Persian) "حساب گوگل" else "Google Account"
+                val emailTabTitle = if (language == AppLanguage.Persian) "کد تایید ایمیلی" else "Email OTP"
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (activeTab == 0) Color(0x1A3A86FF) else Color.Transparent)
+                        .border(1.dp, if (activeTab == 0) AccentBlue.copy(alpha = 0.5f) else Color.Transparent, RoundedCornerShape(8.dp))
+                        .clickable { if (!isAuthLoading) activeTab = 0 },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = googleTabTitle,
+                        color = if (activeTab == 0) AccentBlue else TextSlate400,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (activeTab == 1) Color(0x1A3A86FF) else Color.Transparent)
+                        .border(1.dp, if (activeTab == 1) AccentBlue.copy(alpha = 0.5f) else Color.Transparent, RoundedCornerShape(8.dp))
+                        .clickable { if (!isAuthLoading) activeTab = 1 },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = emailTabTitle,
+                        color = if (activeTab == 1) AccentBlue else TextSlate400,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (activeTab == 0) {
+                // --- GOOGLE SIGN-IN TAB ---
+                Text(
+                    text = if (language == AppLanguage.Persian) 
+                        "برای استفاده سریع و بدون نیاز به تایید ایمیل، با حساب گوگل خود وارد شوید." 
+                        else "For frictionless access without extra verification steps, sign in using Google.",
+                    color = TextSlate400,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                Card(
+                    onClick = {
+                        if (!isAuthLoading) {
+                            showGoogleAccountsDialog = true
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .testTag("google_login_btn"),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Color.White),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Canvas(modifier = Modifier.size(16.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                drawCircle(color = Color(0xFFEA4335), radius = w * 0.5f)
+                                drawCircle(color = Color.White, radius = w * 0.35f)
+                                drawRect(color = Color.White, size = androidx.compose.ui.geometry.Size(w * 0.5f, h * 0.3f), topLeft = Offset(w * 0.5f, h * 0.35f))
+                                drawCircle(color = Color(0xFF4285F4), radius = w * 0.25f, center = Offset(w * 0.55f, h * 0.5f))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Text(
+                            text = if (language == AppLanguage.Persian) "ورود با حساب گوگل" else "Sign in with Google",
+                            color = Color(0xFF1F1F1F),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            } else {
+                // --- EMAIL OTP TAB ---
+                if (!otpSent) {
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = { 
+                            emailInput = it
+                            viewModel.resetAuthError()
+                        },
+                        label = { Text(if (language == AppLanguage.Persian) "آدرس ایمیل" else "Email Address") },
+                        placeholder = { Text("example@gmail.com") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = "EmailIcon", tint = AccentBlue) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentBlue,
+                            unfocusedBorderColor = GlassBorder,
+                            focusedLabelColor = AccentBlue,
+                            unfocusedLabelColor = TextSlate400,
+                            focusedTextColor = TextSlate100,
+                            unfocusedTextColor = TextSlate100,
+                            focusedContainerColor = Color(0x0CFFFFFF),
+                            unfocusedContainerColor = Color(0x0CFFFFFF)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("auth_email_field"),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Button(
+                        onClick = { viewModel.sendOtpToEmail(emailInput) },
+                        enabled = !isAuthLoading && emailInput.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentBlue,
+                            disabledContainerColor = AccentBlue.copy(alpha = 0.4f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("auth_send_otp_btn")
+                    ) {
+                        if (isAuthLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                        } else {
+                            Text(
+                                text = if (language == AppLanguage.Persian) "ارسال کد تایید" else "Send Verification Code",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = if (language == AppLanguage.Persian) 
+                            "کد تایید ۶ رقمی به آدرس $currentUserEmail ارسال شد." 
+                            else "A 6-digit verification code was sent to $currentUserEmail.",
+                        color = TextSlate400,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    if (realEmailSent) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 16.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(NeonGreen.copy(alpha = 0.15f))
+                                .border(1.dp, NeonGreen.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (language == AppLanguage.Persian)
+                                    "✅ کد تایید با موفقیت به ایمیل شما ارسال شد! لطفاً صندوق ورودی خود را بررسی کنید."
+                                    else "✅ Verification code sent successfully! Please check your inbox.",
+                                color = NeonGreen,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+
+                    if (isDemoMode) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 16.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0x24FFAA00))
+                                .border(1.dp, Color(0x66FFAA00), RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = if (language == AppLanguage.Persian) "⚠️ حالت شبیه‌سازی (کلید Brevo یا Resend تنظیم نشده است)" else "⚠️ Simulation Mode (Brevo or Resend API Key not configured)",
+                                    color = Color(0xFFFFAA00),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = generatedOtp ?: "123456",
+                                    color = Color.White,
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 4.sp
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = otpInput,
+                        onValueChange = { 
+                            if (it.length <= 6) {
+                                otpInput = it
+                                viewModel.resetAuthError()
+                            }
+                        },
+                        label = { Text(if (language == AppLanguage.Persian) "کد تایید ۶ رقمی" else "6-Digit Code") },
+                        placeholder = { Text("000000") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "LockIcon", tint = AccentBlue) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentBlue,
+                            unfocusedBorderColor = GlassBorder,
+                            focusedLabelColor = AccentBlue,
+                            unfocusedLabelColor = TextSlate400,
+                            focusedTextColor = TextSlate100,
+                            unfocusedTextColor = TextSlate100,
+                            focusedContainerColor = Color(0x0CFFFFFF),
+                            unfocusedContainerColor = Color(0x0CFFFFFF)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("auth_otp_field"),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        IconButton(
+                            onClick = { viewModel.logout() },
+                            modifier = Modifier
+                                .size(50.dp)
+                                .glassCard(RoundedCornerShape(12.dp))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowBack,
+                                contentDescription = "Back",
+                                tint = TextSlate100
+                            )
+                        }
+
+                        Button(
+                            onClick = { viewModel.verifyOtp(otpInput) },
+                            enabled = !isAuthLoading && otpInput.length == 6,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AccentBlue,
+                                disabledContainerColor = AccentBlue.copy(alpha = 0.4f)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .testTag("auth_verify_otp_btn")
+                        ) {
+                            if (isAuthLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text(
+                                    text = if (language == AppLanguage.Persian) "بررسی کد و ورود" else "Verify & Enter",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!authError.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(WarningRed.copy(alpha = 0.15f))
+                        .border(1.dp, WarningRed.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = authError ?: "",
+                        color = WarningRed,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        if (showGoogleAccountsDialog) {
+            AlertDialog(
+                onDismissRequest = { showGoogleAccountsDialog = false },
+                title = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (language == AppLanguage.Persian) "انتخاب حساب کاربری گوگل" else "Choose a Google Account",
+                            color = TextSlate100,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(
+                            onClick = { showGoogleAccountsDialog = false },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = TextSlate400,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        GoogleAccountRow(
+                            name = "Moein Masnavidost",
+                            email = "moeinmasnavidost19@gmail.com",
+                            onClick = {
+                                showGoogleAccountsDialog = false
+                                viewModel.loginWithGoogle("moeinmasnavidost19@gmail.com", "Moein")
+                            }
+                        )
+
+                        GoogleAccountRow(
+                            name = "Guest User",
+                            email = "guest.poorvpn@gmail.com",
+                            onClick = {
+                                showGoogleAccountsDialog = false
+                                viewModel.loginWithGoogle("guest.poorvpn@gmail.com", "Guest")
+                            }
+                        )
+                    }
+                },
+                confirmButton = {},
+                containerColor = DeepDarkBg,
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier
+                    .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
+                    .padding(4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun GoogleAccountRow(
+    name: String,
+    email: String,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = Color(0x0CFFFFFF)),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(12.dp))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0x243A86FF)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = name.take(1).uppercase(),
+                    color = AccentBlue,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column {
+                Text(
+                    text = name,
+                    color = TextSlate100,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = email,
+                    color = TextSlate400,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+

@@ -16,6 +16,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.example.BuildConfig
+import com.example.network.BrevoApiService
+import com.example.network.SendSmtpEmail
+import com.example.network.SendSmtpEmailSender
+import com.example.network.SendSmtpEmailTo
+import com.example.network.ResendApiService
+import com.example.network.SendResendEmail
+import android.util.Log
 
 enum class ConnectionState {
     Disconnected,
@@ -28,11 +36,208 @@ enum class AppLanguage {
     Persian
 }
 
+enum class VpnProtocol {
+    WireGuard,
+    OpenVPN
+}
+
 class VpnViewModel(private val repository: ConnectionLogRepository) : ViewModel() {
+
+    // Authentication State
+    private val _isLoggedIn = MutableStateFlow(false)
+    val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+
+    private val _currentUserEmail = MutableStateFlow<String?>(null)
+    val currentUserEmail: StateFlow<String?> = _currentUserEmail.asStateFlow()
+
+    private val _currentUserName = MutableStateFlow<String?>(null)
+    val currentUserName: StateFlow<String?> = _currentUserName.asStateFlow()
+
+    private val _otpSent = MutableStateFlow(false)
+    val otpSent: StateFlow<Boolean> = _otpSent.asStateFlow()
+
+    private val _generatedOtp = MutableStateFlow<String?>(null)
+    val generatedOtp: StateFlow<String?> = _generatedOtp.asStateFlow()
+
+    private val _isAuthLoading = MutableStateFlow(false)
+    val isAuthLoading: StateFlow<Boolean> = _isAuthLoading.asStateFlow()
+
+    private val _authError = MutableStateFlow<String?>(null)
+    val authError: StateFlow<String?> = _authError.asStateFlow()
+
+    private val _realEmailSent = MutableStateFlow(false)
+    val realEmailSent: StateFlow<Boolean> = _realEmailSent.asStateFlow()
+
+    private val _isDemoMode = MutableStateFlow(false)
+    val isDemoMode: StateFlow<Boolean> = _isDemoMode.asStateFlow()
+
+    fun loginWithGoogle(email: String, name: String) {
+        viewModelScope.launch {
+            _isAuthLoading.value = true
+            _authError.value = null
+            delay(1200) // Beautiful authentication latency simulation
+            _currentUserEmail.value = email
+            _currentUserName.value = name
+            _isLoggedIn.value = true
+            _isAuthLoading.value = false
+        }
+    }
+
+    fun sendOtpToEmail(email: String) {
+        if (email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            _authError.value = if (_language.value == AppLanguage.Persian) "لطفاً یک ایمیل معتبر وارد کنید" else "Please enter a valid email address"
+            return
+        }
+        viewModelScope.launch {
+            _isAuthLoading.value = true
+            _authError.value = null
+            _realEmailSent.value = false
+            _isDemoMode.value = false
+
+            val otp = (100000..999999).random().toString()
+            _generatedOtp.value = otp
+            _currentUserEmail.value = email
+
+            val resendKey = BuildConfig.RESEND_API_KEY
+            val brevoKey = BuildConfig.BREVO_API_KEY
+
+            val isResendConfigured = resendKey.isNotBlank() && resendKey != "YOUR_RESEND_API_KEY"
+            val isBrevoConfigured = brevoKey.isNotBlank() && brevoKey != "YOUR_BREVO_API_KEY"
+
+            if (!isResendConfigured && !isBrevoConfigured) {
+                // Fall back to simulation mode gracefully
+                _isDemoMode.value = true
+                _otpSent.value = true
+                _isAuthLoading.value = false
+                return@launch
+            }
+
+            if (isResendConfigured) {
+                try {
+                    val service = ResendApiService.create()
+                    val response = service.sendEmail(
+                        authorizationHeader = "Bearer $resendKey",
+                        email = SendResendEmail(
+                            from = "poor VPN <onboarding@resend.dev>",
+                            to = listOf(email),
+                            subject = if (_language.value == AppLanguage.Persian) "کد تایید ورود به poor VPN" else "poor VPN Verification Code",
+                            html = """
+                                <div style="font-family: Arial, sans-serif; direction: ${if (_language.value == AppLanguage.Persian) "rtl" else "ltr"}; text-align: center; padding: 20px; border-radius: 10px; background-color: #0f172a; color: #f1f5f9; border: 1px solid #334155;">
+                                    <h2 style="color: #3a86ff;">poor VPN</h2>
+                                    <p>${if (_language.value == AppLanguage.Persian) "کد تایید یک‌بار مصرف شما برای ورود به برنامه:" else "Your one-time verification code to log in is:"}</p>
+                                    <div style="display: inline-block; padding: 15px 30px; margin: 15px 0; font-size: 28px; font-weight: bold; letter-spacing: 4px; border-radius: 8px; background-color: #1e293b; color: #3a86ff; border: 1px solid #3a86ff;">
+                                        $otp
+                                    </div>
+                                    <p style="font-size: 12px; color: #94a3b8;">${if (_language.value == AppLanguage.Persian) "این کد پس از چند دقیقه منقضی می‌شود." else "This code will expire in a few minutes."}</p>
+                                </div>
+                            """.trimIndent()
+                        )
+                    )
+
+                    if (response.isSuccessful) {
+                        _realEmailSent.value = true
+                        _otpSent.value = true
+                    } else {
+                        Log.e("VpnViewModel", "Resend sendEmail error: ${response.code()} ${response.message()}")
+                        _isDemoMode.value = true
+                        _otpSent.value = true
+                        _authError.value = if (_language.value == AppLanguage.Persian) 
+                            "ارسال ایمیل واقعی با Resend ناموفق بود. از حالت شبیه‌ساز استفاده شد." 
+                            else "Real email sending with Resend failed. Falling back to simulation mode."
+                    }
+                } catch (e: Exception) {
+                    Log.e("VpnViewModel", "Resend sendEmail failed", e)
+                    _isDemoMode.value = true
+                    _otpSent.value = true
+                    _authError.value = if (_language.value == AppLanguage.Persian) 
+                        "خطا در ارتباط با سرور Resend. از حالت شبیه‌ساز استفاده شد." 
+                        else "Connection error with Resend server. Falling back to simulation mode."
+                } finally {
+                    _isAuthLoading.value = false
+                }
+            } else {
+                try {
+                    val service = BrevoApiService.create()
+                    val response = service.sendEmail(
+                        apiKey = brevoKey,
+                        email = SendSmtpEmail(
+                            sender = SendSmtpEmailSender(name = "poor VPN", email = "no-reply@poorvpn.com"),
+                            to = listOf(SendSmtpEmailTo(email = email)),
+                            subject = if (_language.value == AppLanguage.Persian) "کد تایید ورود به poor VPN" else "poor VPN Verification Code",
+                            htmlContent = """
+                                <div style="font-family: Arial, sans-serif; direction: ${if (_language.value == AppLanguage.Persian) "rtl" else "ltr"}; text-align: center; padding: 20px; border-radius: 10px; background-color: #0f172a; color: #f1f5f9; border: 1px solid #334155;">
+                                    <h2 style="color: #3a86ff;">poor VPN</h2>
+                                    <p>${if (_language.value == AppLanguage.Persian) "کد تایید یک‌بار مصرف شما برای ورود به برنامه:" else "Your one-time verification code to log in is:"}</p>
+                                    <div style="display: inline-block; padding: 15px 30px; margin: 15px 0; font-size: 28px; font-weight: bold; letter-spacing: 4px; border-radius: 8px; background-color: #1e293b; color: #3a86ff; border: 1px solid #3a86ff;">
+                                        $otp
+                                    </div>
+                                    <p style="font-size: 12px; color: #94a3b8;">${if (_language.value == AppLanguage.Persian) "این کد پس از چند دقیقه منقضی می‌شود." else "This code will expire in a few minutes."}</p>
+                                </div>
+                            """.trimIndent()
+                        )
+                    )
+
+                    if (response.isSuccessful) {
+                        _realEmailSent.value = true
+                        _otpSent.value = true
+                    } else {
+                        Log.e("VpnViewModel", "Brevo sendEmail error: ${response.code()} ${response.message()}")
+                        _isDemoMode.value = true
+                        _otpSent.value = true
+                        _authError.value = if (_language.value == AppLanguage.Persian) 
+                            "ارسال ایمیل واقعی با Brevo ناموفق بود. از حالت شبیه‌ساز استفاده شد." 
+                            else "Real email sending with Brevo failed. Falling back to simulation mode."
+                    }
+                } catch (e: Exception) {
+                    Log.e("VpnViewModel", "Brevo sendEmail failed", e)
+                    _isDemoMode.value = true
+                    _otpSent.value = true
+                    _authError.value = if (_language.value == AppLanguage.Persian) 
+                        "خطا در ارتباط با سرور Brevo. از حالت شبیه‌ساز استفاده شد." 
+                        else "Connection error with Brevo server. Falling back to simulation mode."
+                } finally {
+                    _isAuthLoading.value = false
+                }
+            }
+        }
+    }
+
+    fun verifyOtp(enteredCode: String) {
+        if (enteredCode != _generatedOtp.value) {
+            _authError.value = if (_language.value == AppLanguage.Persian) "کد وارد شده صحیح نیست" else "Invalid verification code"
+            return
+        }
+        viewModelScope.launch {
+            _isAuthLoading.value = true
+            _authError.value = null
+            delay(1000)
+            _currentUserName.value = _currentUserEmail.value?.substringBefore("@")
+            _isLoggedIn.value = true
+            _isAuthLoading.value = false
+        }
+    }
+
+    fun resetAuthError() {
+        _authError.value = null
+    }
+
+    fun logout() {
+        _isLoggedIn.value = false
+        _currentUserEmail.value = null
+        _currentUserName.value = null
+        _otpSent.value = false
+        _generatedOtp.value = null
+        _realEmailSent.value = false
+        _isDemoMode.value = false
+    }
 
     // Language setting
     private val _language = MutableStateFlow(AppLanguage.Persian) // Default to Persian as requested
     val language: StateFlow<AppLanguage> = _language.asStateFlow()
+
+    // Selected Protocol
+    private val _protocol = MutableStateFlow(VpnProtocol.WireGuard)
+    val protocol: StateFlow<VpnProtocol> = _protocol.asStateFlow()
 
     // Active connection state
     private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
@@ -72,6 +277,12 @@ class VpnViewModel(private val repository: ConnectionLogRepository) : ViewModel(
     private val _serverLatencies = MutableStateFlow<Map<String, Int>>(DefaultServers.associate { it.id to it.baseLatencyMs })
     val serverLatencies: StateFlow<Map<String, Int>> = _serverLatencies.asStateFlow()
 
+    // Real-time server load percentage map (0 - 100%) initialized with realistic values
+    private val _serverLoads = MutableStateFlow<Map<String, Int>>(
+        DefaultServers.associate { it.id to (12..82).random() }
+    )
+    val serverLoads: StateFlow<Map<String, Int>> = _serverLoads.asStateFlow()
+
     // Real-time pinging progress status
     private val _isPingingAll = MutableStateFlow(false)
     val isPingingAll: StateFlow<Boolean> = _isPingingAll.asStateFlow()
@@ -90,15 +301,24 @@ class VpnViewModel(private val repository: ConnectionLogRepository) : ViewModel(
 
     private var connectionJob: Job? = null
     private var encryptionJob: Job? = null
+    private var loadJob: Job? = null
 
     init {
         // Start background encryption scanner animation even when disconnected
         // to show beautiful idle tech-stream.
         startEncryptionStreamSim()
+        // Start real-time server load simulation to fluctuate load speeds dynamically
+        startServerLoadSim()
     }
 
     fun setLanguage(lang: AppLanguage) {
         _language.value = lang
+    }
+
+    fun setProtocol(proto: VpnProtocol) {
+        if (_connectionState.value == ConnectionState.Disconnected) {
+            _protocol.value = proto
+        }
     }
 
     fun selectServer(server: VpnServer) {
@@ -263,10 +483,29 @@ class VpnViewModel(private val repository: ConnectionLogRepository) : ViewModel(
         }
     }
 
+    private fun startServerLoadSim() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            while (true) {
+                delay(4000)
+                val currentMap = _serverLoads.value.toMutableMap()
+                DefaultServers.forEach { server ->
+                    val currentLoad = currentMap[server.id] ?: (15..85).random()
+                    // Fluctuate load by -4% to +4%
+                    val delta = (-4..4).random()
+                    val newLoad = (currentLoad + delta).coerceIn(8, 98)
+                    currentMap[server.id] = newLoad
+                }
+                _serverLoads.value = currentMap.toMap()
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         connectionJob?.cancel()
         encryptionJob?.cancel()
+        loadJob?.cancel()
     }
 }
 

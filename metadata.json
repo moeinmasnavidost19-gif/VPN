@@ -1,5 +1,5 @@
 {
-  "name": "Secure VPN",
+  "name": "poor",
   "description": "برنامه وی‌پی‌ان ایمن با شبیه‌ساز رمزنگاری پیشرفته، سرورهای پرسرعت و تست پینگ واقعی",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
